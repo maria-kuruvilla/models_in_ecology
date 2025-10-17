@@ -1,0 +1,999 @@
+---
+title: "Models in Ecology"
+subtitle: "Lab 3"
+author: 'Maria Kuruvilla'
+date: "Sep 2025"
+output:
+  word_document:
+    toc: false
+  pdf_document:
+    toc: false
+  html_document:
+    collapsed: false
+    fig_caption: true
+    highlight: espresso
+    number_sections: true
+    smooth_scroll: true
+    theme: sandstone
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+<!-- Make a new document for Lab 3 - redo analysis fromKrkosek and Hilborn 2011 in a Bayesian framework  -->
+
+```{=html}
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 13px;
+  }
+td {  /* Table  */
+  font-size: 13px;
+}
+h1.title {
+  font-size: 24px;
+  color: Black;
+}
+h1 { /* Header 1 */
+  font-size: 19px;
+  color: Black;
+}
+h2 { /* Header 2 */
+    font-size: 15px;
+  color: Black;
+}
+h3 { /* Header 3 */
+    font-size: 15px;
+  color: Black;
+}
+</style>
+```
+## Modelling background and equations
+
+In this lab we use mixed effects models, containing both fixed and
+random effects, to assess the impacts of sea lice on salmon returns. The
+approach we will take follows the class reading of Krkošek and Hilborn
+(2011). However, there are some differences. We will have an updated
+data set, which include later years with lower sea lice levels. Also, so
+as to keep things manageable we will only fit a subset of the models
+given in Krkošek and Hilborn (2011).
+
+We will draw on the theory of Lecture 10 of the BIOL 470/550B class
+(Mixed Effects Models). Please review these notes. Pay particular
+attention to the pages on “Which random effects should we include?”,
+“Testing random effects structure” and “Crossed vs. nested random
+effects”. They will all be helpful here.
+
+Please also have the Krkošek and Hilborn (2011) handy as we will be
+referring to it throughout the lab. Finally, it is easier to read the
+equations in this lab if you download the file to your computer and read
+it using Word.
+
+### Background: Fitting mixed-effects models in Stan
+
+We will use the rstan package to fit a Bayesian mixed-effects (or
+hierarchical) model in R. You will need the following: - Recent R (\>
+4.2.0) - Recent Rstudio (or text editor of your choice – but we will be
+using Rstudio!)
+
+It is recommended that your code for this lab and class is within one
+folder which is also an Rproject [Why Use
+Projects?](https://thedavidchen.github.io/post/rstudio-why-use-projects/)
+
+Within R you should install the following packages: - Tidyverse
+installed in R (we’ll mostly use dplyr and ggplot2) -
+[Rstan](https://mc-stan.org/rstan/) NOTE: When installing rstan, use the
+[following
+instructions.](https://github.com/stan-dev/rstan/wiki/RStan-Getting-Started)
+
+Please go through the above instructions for your operating system. Make
+sure to run the example! Here is a minimal workflow example:
+
+```{r echo=TRUE, eval=FALSE}
+install.packages("rstan", repos = c('https://stan-dev.r-universe.dev', getOption("repos")))
+example(stan_model, package = "rstan", run.dontrun = TRUE)
+
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+Here are the list of packages we will be using for this lab. You can use the following code to check whether you have already installed these packages and to install them, if not. Then load the packages to use them.
+
+```{r packages, include=TRUE, echo = TRUE, results = 'hide'}
+
+list.of.packages <- c("ggplot2", "tidyverse", "here", "tidybayes")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+#load packages 
+library(rstan)
+rstan_options("auto_write" = TRUE)
+options(mc.cores = parallel::detectCores())
+library(tidybayes)
+library(here)
+library(tidyverse)
+library(ggplot2)
+
+
+```
+
+
+### Mixed-effects models for salmon populations
+
+Read Krkosek and Hilborn (2011) (henceforth referred to as KH), focusing on the section Stock recruit model, in which they develop a hierarchical version of the Ricker model that includes random effects to account for spatial and temporal co-variation among populations. The full model they present (equation 7) for the log ratio of recruits to spawners is:
+
+$$ln(R_{river,t}/S_{river,t}) = (\alpha_{river} + \beta_{exposure category} + \theta_t + \delta_{t,area}) - b_{river} S_{river,t} + \epsilon_{river,t}$$
+
+where $R_{river,t}$ is the number of recruits from population $river$ in year $t$, $S_{river,t}$ is the number of spawners, $\alpha_{river}$ is a random intercept for each population, $\beta_{exposure category}$ is a fixed effect for the exposure category (exposed/unexposed and time period), $\theta_t$ is a random year effect common to all populations in year $t$, $\delta_{t,area}$ is a random effect for year $t$ and area, $b_{river}$ is a random slope for each population, and $\epsilon_{river,t}$ is the residual error.
+
+
+- the index river indicates which of the up to 128 pink salmon populations (64 Rivers x 2 options for Odd_Even years) is being considered, 
+- the index exposure category enumerates the exposure category (in KH there are 6 and in our data set there are 8), 
+- the index t gives the return year (Return_Yr) and
+-	the index area describes which of the fisheries management areas (Area) the population is found in.
+
+Note that equation (1) indicates that the population dynamics are analyzed at the level of the individual populations: the index "river" appears in each of the variables.  Equation (1) indicates that the analysis will occur at the level of each population.  The spawners and recruits are measured for each population: the index "river" appears in the formulas. The density dependence b_river will also be different for each population, as will the noise term $\epsilon_{river,t}$.  What we are really interested in from an ecological perspective is how the growth rate r is structured across exposure categories, indexed by exposure category, (rather than across populations, indexed by river).  However, to deal with the hierarchy of different factors effecting the growth rate, random effects at the levels of return years (indexed by t), populations (indexed by river) and management areas (indexed by a) are also included in the growth rate analysis.
+The six exposure classes in KH were given by 3 time periods relative to when infestations occurred (before, during, fallow) x two exposure to sea lice options (exposed and unexposed to sea lice from farmed salmon).  Here exposure to the sea lice came from populations being in management area 12 where the fish farms were present. 
+However, the data we will use for this lab come from a newer dataset that includes return years to 2009.  Therefore, we will include a fourth time period, "after" infestations (see Peacock et al. (2013) for more on this, where it is shown that changes in farm management greatly reduced the impact of sea lice in later years).  Thus, the eight exposure classes we have are unexposed-before, unexposed-fallow, unexposed-during, unexposed-after, exposed-before, exposed-fallow, exposed-during, exposed-after.  Of these 8 classes, only one of them (exposed-during) give both the location and time interval where the wild salmon returns were hypothesized by KH to be influenced by the sea lice on salmon farms that juveniles were exposed to on their out-migration to the ocean.
+
+Download the spawner-recruit "Pink S-R data" as a .csv file. Read those data into R. I have downloaded into a folder called "lab3".
+
+```{r data, echo=TRUE}
+
+
+data <- read.csv(here("lab3","Pink_S-R_data.csv"))
+
+# get a glimpse of the data
+glimpse(data)
+```
+
+
+The Return_Yr is the year that the Recruits came back to spawn, meaning that the Spawners column refers to the spawners that started in year Return_Yr-2.  Area refers to the Department of Fisheries and Oceans statistical management area, which is the spatial scale at which catch data are reported (see http://www.pac.dfo-mpo.gc.ca/fm-gp/maps-cartes/areas-secteurs/index-eng.html). 
+Note that because odd and even year returns do not mix and are treated as separate populations, a population is given by a combination of River and Odd_Even. Create a column for population (by combining river and Odd_Even). Then calculate survival as log(Recruits/Spawners).  Create a column for exposure category (by combining exposure and time_period).  Finally, create a column for time series length, start row and end row for each population. We will need this to differentiate the data from different populations in stan.
+
+Now use the unique and the length functions in R to check how many return years, management areas and populations there are in the data frame.
+
+```{r data_processing, echo = TRUE, include = TRUE}
+
+data_new <- data %>% 
+  mutate(survival = log(Recruits/Spawners),
+         population = paste(River,Odd_Even),
+         time_period = case_when(Return_Yr < 2002 ~ factor("before"),
+                                 Return_Yr == 2004 ~ factor("fallow"),
+                                 Return_Yr >= 2002 & Return_Yr <= 2006 ~ factor("during"),
+                                 Return_Yr > 2006 ~ factor("after")),
+         exposure = as.factor(ifelse(Area==12, "exposed","unexposed"))) %>% 
+  mutate(exposure_category = paste(exposure, time_period),
+         row_number = row_number()) %>% 
+  # add a column with the start row number and another with the end row number for
+  # the time series of each population
+  group_by(population) %>%
+  mutate(time_series_length = n(),
+         start_row = first(row_number),
+         end_row = last(row_number)) %>% 
+  ungroup()
+  
+  
+
+glimpse(data_new)
+
+```
+
+
+Now you should have all the data you need to fit the models described in KH on page 21: all possible combinations of random effects, each with and without the growth rate structured by exposure category.  However, in this lab we focus on four categories of the random effects models in KH, which we call models 1 (no random effects), 3 (random effect for intercept on Return_Yr), 4 (random effect for intercept on Area), and 7 (random effect for intercept on Area nested within Return_Yr).  These are given in rows 1, 3, 4, and 7 of KH Table 2.  For each of these models we are interested in the effect of the exposure category on the population growth rate. Thus, we fit each of the models with no exposure categories (model a) and with the 8 exposure categories given above (model b).  Note that the population growth rate alpha is the intercept term in equation (1).  
+
+You can visualize the data using the following code. Since there are many populations, we can group the plots by area.
+
+
+```{r plot_data, echo=TRUE, fig.width = 10, fig.height = 10}
+
+
+ggplot(data_new, aes(x = Return_Yr, y = survival, group = population))+
+  geom_point(alpha = 0.8, aes(color = exposure_category))+
+  geom_line(aes(color = exposure_category), alpha = 0.6, size = 1.2)+
+  geom_vline(xintercept = 2002, linetype = "dashed", color = "darkred")+
+  facet_wrap(~paste("Area:",Area), ncol = 1, scales = "free_y") +
+  scale_color_manual(values = c("exposed before" = "lightblue",
+                                "exposed during" = "darkred", 
+                              "exposed after" = "darkblue", 
+                              "exposed fallow" = "violet",
+                              "unexposed before" = "lightblue", 
+                              "unexposed during" = "lightblue",
+                              "unexposed after" = "lightblue", 
+                              "unexposed fallow" = "lightblue")) +
+  theme_classic()+
+  theme(strip.background = element_blank(),
+        legend.position = "none") + 
+  labs(title = "Pink Salmon Survival vs Return Year",
+       x = "Return Year",
+       y = "Survival (log(Recruits/Spawners))",
+       color = "Exposure Category")
+```
+
+
+
+In summary we will have models
+
+- 1a: no random effect, no exposure categories, 
+
+- 1b: no random effects, exposure categories, 
+
+- 3a: random effect for intercept on Return_Yr, no exposure categories,
+
+- 3b random effect for intercept on Return_Yr, exposure categories,
+
+- 4a random effect for intercept on Area, no exposure categories,
+
+- 4b: random effect for intercept on Area, exposure categories,
+
+- 7a: random effect for intercept on Area nested within Return_Yr, no exposure categories, and 
+
+- 7b: random effect for intercept on Area nested within Return_Yr, exposure categories. 
+
+
+
+### Stan
+
+[Stan](https://mc-stan.org/) is a probabilistic programming language that allows us to run Bayesian statistical models - from simple linear regression to more complicated multi-level models and time-series analysis. 
+
+A Stan program is organized into a sequence of named blocks:
+
+```{stan output.var="blocks", eval=FALSE, include=TRUE}
+
+functions {
+  // ... function declarations and definitions ...
+}
+data {
+  // ... declarations ...
+}
+transformed data {
+   // ... declarations ... statements ...
+}
+parameters {
+   // ... declarations ...
+}
+transformed parameters {
+   // ... declarations ... statements ...
+}
+model {
+   // ... declarations ... statements ...
+}
+generated quantities {
+   // ... declarations ... statements ...
+}
+
+```
+
+
+All of the blocks are options. Note that comments start with "//" and all lines end with a semicolon ";".
+
+Here us an example of a simple linear regression for one salmon population which can be expressed as $y_n \sim normal(\alpha + \beta X_n, \sigma)$ where $y_n$ is survival in year n, $\alpha$ is the growth rate, $\beta$ is the density dependence, and $X_n$ is the spawners at year n:
+
+```{stan output.var="simple", eval=FALSE, include=TRUE}
+
+data {
+  int<lower=0> N; //number of observations or years in this case
+  vector[N] x; //predictor of size N
+  vector[N] y; //response variable of size N
+}
+parameters {
+  real alpha; //intercept to be estimated
+  real beta; //slope to be estimated
+  real<lower=0> sigma; //variance to be estimated
+}
+model {
+
+  alpha ~ normal(1.2, 2); //prior for intercept, based on literature
+  beta ~ normal(0, 10); //prior for slope
+  sigma ~ normal(0, 1); //prior for variance
+  y ~ normal(alpha + beta * x, sigma); // linear model
+}
+
+```
+
+
+### Model 1a
+
+For the model with no random effects and no exposure categories. Call the following model "ricker_1a.stan".
+
+```{stan output.var="ricker_1a_model"}
+
+data{
+  int<lower=0> N; //number of observations
+  int J; //number of populations
+  array[N] real spawners; 
+  array[N] real survival; //log(Recruits/spawner)
+  array[J] real Smax_mean; //prior mean of Smax
+  array[J] real Smax_sigma; // prior sigma of Smax
+  array[J] int start_row; //start of observation for that population
+  array[J] int end_row; //end of observations for that population
+  
+}
+
+transformed data {
+  
+  vector[J] log_Smax_mean;
+  vector[J] log_Smax_sigma;
+  
+  //moment matching
+  for (j in 1:J){
+    log_Smax_mean[j] = log(Smax_mean[j]) - 0.5*log(1 + (Smax_sigma[j]^2)/(Smax_mean[j]^2)); //convert smax prior to per capita slope - transform to log scale with bias correction
+    log_Smax_sigma[j] = sqrt(log(1 + (Smax_sigma[j]^2)/(Smax_mean[j]^2))); //this converts sigma on the untransformed scale to a log scale
+  }
+  
+  
+  
+}
+
+parameters {
+  
+  vector<lower=0>[J] Smax; // spawner level at which recruits are maximized (according to Ricker model)
+  real alpha; //river level intrinsic productivity, intercept
+  //variance components
+  real<lower=0> mu_sigma; ///mean sigma among all stocks
+}
+
+transformed parameters {
+  vector<lower=0>[J] b; //per capita density dependence term, slope
+  //productivity residuals through time
+  vector[N] e_t; //stock residual productivity at time t
+  vector[N] mu; //expectation at each time for each stock
+  
+  for(j in 1:J){ // for every population
+  b[j] = 1/Smax[j];
+  
+  for(t in start_row[j]:end_row[j]){ //for every year
+  mu[t] = alpha - b[j]*spawners[t];
+  e_t[t] = survival[t] - mu[t]; // no autocorrelation in errors
+  }
+  
+  }
+  
+}
+
+
+model {
+  alpha ~ normal(1.2,2); //prior for intrinsic productivity for all stocks
+  
+  for(j in 1:J){
+    Smax[j] ~ lognormal(log_Smax_mean[j], log_Smax_sigma[j]); //prior on Smax for each stock
+  }
+  //variance terms
+  mu_sigma ~ normal(1,1);
+  
+  //likelihood
+  for(j in 1:J){
+    survival ~ normal(mu, mu_sigma); //likelihood for all observations (no autocorrelation)
+  }
+  
+  
+}
+
+
+
+```
+
+
+```{r 1a_run, eval = TRUE, include = TRUE, cache=TRUE}
+
+# call model
+
+ricker_1a_model <- stan_model(file = here("lab3","ricker_1a.stan"))
+
+# first extract max S for priors
+smax_prior= data_new %>%
+  group_by(population) %>%
+  summarize(m.s=Spawners[which.max(Recruits)],m.r=max(Recruits))
+
+# create data list for model 
+
+data_list_1a <- list(
+  N = nrow(data_new),
+  J = length(unique(data_new$population)),
+  spawners = data_new$Spawners,
+  survival = data_new$survival,
+  Smax_mean = smax_prior$m.s,
+  Smax_sigma = 2*smax_prior$m.s,
+  start_row = unique(data_new$start_row),
+  end_row = unique(data_new$end_row)
+)
+
+# sample from model
+ricker_1a_model_sampling <- rstan::sampling(ricker_1a_model,
+                                            data = data_list_1a,
+                                            chains = 4,
+                                            iter = 2000,
+                                            warmup = 1000)
+```
+
+
+```{r fig.width=8, fig.height=6}
+
+# check trace plots to look for caterpillar like sampling plots
+
+bayesplot::mcmc_trace(ricker_1a_model_sampling, pars = "alpha")
+bayesplot::mcmc_trace(ricker_1a_model_sampling, pars = "b[1]")
+bayesplot::mcmc_trace(ricker_1a_model_sampling, pars = "Smax[1]")
+
+
+
+# plot posterior probability distribution
+bayesplot::mcmc_areas(ricker_1a_model_sampling, pars = c("alpha"))
+
+
+
+```
+
+
+### Model 1b
+
+```{stan output.var="ricker_1b_model"}
+
+data{
+  int<lower=0> N; //number of observations
+  int<lower=0> K; //number of observations
+  int J; //number of populations
+  array[N] real spawners; 
+  array[N] real survival; //log(Recruits/spawner)
+  matrix[N,K] exposure_category_matrix; 
+  array[J] real Smax_mean; //prior mean of Smax
+  array[J] real Smax_sigma; // prior sigma of Smax
+  array[J] int start_row; //start of observation for that population
+  array[J] int end_row; //end of observations for that population
+  
+}
+
+transformed data {
+  
+  vector[J] log_Smax_mean;
+  vector[J] log_Smax_sigma;
+  
+  //moment matching
+  for (j in 1:J){
+    log_Smax_mean[j] = log(Smax_mean[j]) - 0.5*log(1 + (Smax_sigma[j]^2)/(Smax_mean[j]^2)); //convert smax prior to per capita slope - transform to log scale with bias correction
+    log_Smax_sigma[j] = sqrt(log(1 + (Smax_sigma[j]^2)/(Smax_mean[j]^2))); //this converts sigma on the untransformed scale to a log scale
+  }
+  
+  
+  
+}
+
+parameters {
+  
+  vector<lower=0>[J] Smax; // spawner level at which recruits are maximized (according to Ricker model)
+  real alpha; //river level intrinsic productivity, intercept
+  //variance components
+  real<lower=0> mu_sigma; ///mean sigma among all stocks
+  // real<lower=0> sd_sigma; ///variance in sigma 
+  vector[K] beta;
+}
+
+transformed parameters {
+  vector<lower=0>[J] b; //per capita density dependence term, slope
+  vector[N] exposure; //exposure effect for each observation
+  //productivity residuals through time
+  vector[N] e_t; //stock residual productivity at time t
+  vector[N] mu; //expectation at each time for each stock
+  
+  for(j in 1:J){ // for every population
+  b[j] = 1/Smax[j];
+  
+  for(t in start_row[j]:end_row[j]){ //for every year
+  exposure[t] = 0;
+  for(k in 1:K){
+    exposure[t] = exposure[t] + exposure_category_matrix[t,k]*beta[k];
+    
+  }
+  mu[t] = alpha - b[j]*spawners[t] + exposure[t];
+  e_t[t] = survival[t] - mu[t]; // no autocorrelation in errors
+  }
+  
+  }
+  
+}
+
+
+model {
+  alpha ~ normal(1.2,2); //prior for intrinsic productivity for all stocks
+  
+  for(j in 1:J){
+    Smax[j] ~ lognormal(log_Smax_mean[j], log_Smax_sigma[j]); //prior on Smax for each stock
+  }
+  //variance terms
+  mu_sigma ~ normal(1,1);
+  // sd_sigma ~ normal(0,1);
+  beta ~ normal(0,1); //prior on exposure effects
+  //likelihood
+  for(j in 1:J){
+    survival ~ normal(mu, mu_sigma); //likelihood for all observations (no autocorrelation)
+  }
+  
+  
+}
+
+
+generated quantities {
+  
+  
+  
+}
+
+
+
+```
+
+
+
+
+```{r cache = TRUE, eval = TRUE, include = TRUE,fig.width=10, fig.height = 12}
+
+# make dummy variable for exposure category
+
+exposure_category_matrix <- model.matrix(~0 + exposure_category, 
+                                         data = data_new)                                    
+#make data list for 1b
+
+data_list_1b <- list(
+  N = nrow(data_new),
+  K = ncol(exposure_category_matrix),
+  J = length(unique(data_new$population)),
+  spawners = data_new$Spawners,
+  survival = data_new$survival,
+  exposure_category_matrix = exposure_category_matrix,
+  Smax_mean = smax_prior$m.s,
+  Smax_sigma = 2*smax_prior$m.s,
+  start_row = unique(data_new$start_row),
+  end_row = unique(data_new$end_row)
+)
+
+# stan model 1b -----------------------------------------------------------
+
+# call model
+
+ricker_1b_model <- stan_model(file = here("lab3","ricker_1b.stan"))
+
+# sample from model
+
+ricker_1b_model_sampling <- rstan::sampling(ricker_1b_model,
+                                            data = data_list_1b,
+                                            chains = 4,
+                                            iter = 2000,
+                                            warmup = 1000)
+
+#save the samples
+saveRDS(ricker_1b_model_sampling, file = here("lab3",
+                                            "ricker_1b_model_sampling.RDS"))
+
+bayesplot::mcmc_trace(ricker_1b_model_sampling, pars = "alpha")
+
+
+exposure_effects_list <- paste0("beta[",1:8,"]")
+
+bayesplot::mcmc_areas(ricker_1b_model_sampling,
+                      pars = exposure_effects_list,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of effects of exposure",
+       x = "Alpha",
+       y = "Density")
+
+post_1b = ricker_1b_model_sampling %>% 
+  rstan::extract(pars = c("alpha","beta"), permuted = TRUE)
+
+#plot alpha + beta with credible intervals for beta_1 to beta_8
+
+df <- NULL
+
+for(i in 1:8){
+  df_colname <- substr(colnames(exposure_category_matrix)[i], 18, nchar(colnames(exposure_category_matrix)[i]))
+  
+  df_temp <- data.frame(exposure_category = df_colname,
+                        alpha_beta = post_1b$alpha + post_1b$beta[,i]
+                        )
+  
+  df <- rbind(df, df_temp)
+  
+  
+}
+
+#calculate median, and upper and lower credible intervals
+
+df_alpha_beta_estimate <- df %>% 
+  group_by(exposure_category) %>%
+  summarize(median = median(alpha_beta),
+            lower = quantile(alpha_beta, probs = 0.025),
+            upper = quantile(alpha_beta, probs = 0.975))
+
+# plot bar plot with credible intervals - exposure category on x axis
+
+ggplot(df_alpha_beta_estimate, aes(x = exposure_category, y = median))+
+  geom_bar(stat = "identity", fill = "lightblue")+
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2)+
+  theme_classic()+
+  labs(title = "Posterior Estimates of Growth Rate (Alpha + Beta) for Exposure Categories",
+       x = "Exposure Category",
+       y = "Growth rate")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16),
+        title = element_text(size = 18))
+
+
+
+```
+
+
+
+### Model 3a
+
+```{r fig.width=10, fig.height = 12}
+
+# model 3a ----------------------------------------------------------------
+
+# include a random effect of year
+
+#need then number of years
+
+years = max(data_new$Return_Yr) - min(data_new$Return_Yr) + 1
+
+data_list_3a <- list(
+  N = nrow(data_new),
+  J = length(unique(data_new$population)),
+  years = years,
+  ii = as.numeric(factor(data_new$Return_Yr)),  #index of brood years
+  spawners = data_new$Spawners,
+  survival = data_new$survival,
+  Smax_mean = smax_prior$m.s,
+  Smax_sigma = 2*smax_prior$m.s,
+  start_row = unique(data_new$start_row),
+  end_row = unique(data_new$end_row)
+)
+
+# call model
+
+ricker_3a_model <- stan_model(file = here("lab3","ricker_3a.stan"))
+
+# sample from model
+
+ricker_3a_model_sampling <- rstan::sampling(ricker_3a_model,
+                                            data = data_list_3a,
+                                            chains = 4,
+                                            iter = 2000,
+                                            warmup = 1000)
+
+# bayesplot::mcmc_trace(ricker_3a_model_sampling, pars = "alpha")
+# bayesplot::mcmc_trace(ricker_3a_model_sampling, pars = "b[1]")
+# bayesplot::mcmc_trace(ricker_3a_model_sampling, pars = "Smax[1]")
+# 
+# # plot posterior probability distribution
+# bayesplot::mcmc_areas(ricker_3a_model_sampling, pars = c("alpha"))
+
+#plot theta
+
+year_effects_list <- paste0("theta_year[",1:years,"]")
+
+bayesplot::mcmc_areas(ricker_3a_model_sampling,
+                      pars = year_effects_list,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of year effects",
+       x = "Year effect",
+       y = "Density")
+
+#extract alpha, theta_year 
+
+post_3a = ricker_3a_model_sampling %>% 
+  rstan::extract(pars = c("alpha","theta_year","Smax"), permuted = TRUE)
+
+
+# plot median theta_year as a time series with credible intervals
+
+
+
+theta_year_df <- data.frame(Return_Yr = min(data_new$Return_Yr):max(data_new$Return_Yr),
+                            theta_year = apply(post_3a$theta_year, 2, median),
+                            theta_year_lower = apply(post_3a$theta_year, 2, quantile, probs = 0.025),
+                            theta_year_upper = apply(post_3a$theta_year, 2, quantile, probs = 0.975)
+                            )
+
+#plot
+
+ggplot(theta_year_df, aes(x = Return_Yr, y = theta_year))+
+  geom_line(color = "#4E654D", size = 1.2)+
+  geom_ribbon(aes(ymin = theta_year_lower, ymax = theta_year_upper), 
+              alpha = 0.5, fill = "#9CC69B")+
+  theme_classic()+
+  labs(title = "Median Year Effects from Model 3a",
+       x = "Return Year",
+       y = "Theta Year Effect")
+
+
+
+
+```
+
+
+
+### Model 3b
+
+In this model, there is a random effect of year as well as exposure categories. 
+
+
+```{r fig.width=10, fig.height = 12, cache = TRUE}
+
+# model 3a ----------------------------------------------------------------
+
+# include a random effect of year
+
+#need then number of years
+
+years = max(data_new$Return_Yr) - min(data_new$Return_Yr) + 1
+
+data_list_3b <- list(
+  N = nrow(data_new),
+  J = length(unique(data_new$population)),
+  K = ncol(exposure_category_matrix),
+  years = years,
+  ii = as.numeric(factor(data_new$Return_Yr)),  #index of brood years
+  spawners = data_new$Spawners,
+  survival = data_new$survival,
+  exposure_category_matrix = exposure_category_matrix,
+  Smax_mean = smax_prior$m.s,
+  Smax_sigma = 2*smax_prior$m.s,
+  start_row = unique(data_new$start_row),
+  end_row = unique(data_new$end_row)
+)
+
+# call model
+
+ricker_3b_model <- stan_model(file = here("lab3","ricker_3b.stan"))
+
+# sample from model
+
+ricker_3b_model_sampling <- rstan::sampling(ricker_3b_model,
+                                            data = data_list_3b,
+                                            chains = 4,
+                                            iter = 2000,
+                                            warmup = 1000)
+
+
+
+#plot theta
+
+year_effects_list <- paste0("theta_year[",1:years,"]")
+
+bayesplot::mcmc_areas(ricker_3b_model_sampling,
+                      pars = year_effects_list,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of year effects",
+       x = "Year effect",
+       y = "Density")
+
+#extract alpha, theta_year 
+
+post_3b = ricker_3b_model_sampling %>% 
+  rstan::extract(pars = c("alpha","theta_year","beta"), permuted = TRUE)
+
+
+# plot median theta_year as a time series with credible intervals
+
+
+
+theta_year_df <- data.frame(Return_Yr = min(data_new$Return_Yr):max(data_new$Return_Yr),
+                            theta_year = apply(post_3b$theta_year, 2, median),
+                            theta_year_lower = apply(post_3b$theta_year, 2, quantile, probs = 0.025),
+                            theta_year_upper = apply(post_3b$theta_year, 2, quantile, probs = 0.975)
+                            )
+#plot
+
+ggplot(theta_year_df, aes(x = Return_Yr, y = theta_year))+
+  geom_line(color = "#4E654D", size = 1.2)+
+  geom_ribbon(aes(ymin = theta_year_lower, ymax = theta_year_upper), 
+              alpha = 0.5, fill = "#9CC69B")+
+  theme_classic()+
+  labs(title = "Median Year Effects from Model 3b",
+       x = "Return Year",
+       y = "Theta Year Effect")
+
+exposure_effects_list <- paste0("beta[",1:8,"]")
+
+bayesplot::mcmc_areas(ricker_3b_model_sampling,
+                      pars = exposure_effects_list,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of effects of exposure",
+       x = "Alpha",
+       y = "Density")
+
+
+
+
+
+
+
+```
+
+
+### Model 7b
+
+
+```{r}
+
+
+# model 7b ----------------------------------------------------------------
+
+# include a random effect of year and area nested within year
+#need then number of years
+
+years = max(data_new$Return_Yr) - min(data_new$Return_Yr) + 1
+
+areas = length(unique(data_new$Area))
+
+
+data_list_7b <- list(
+  N = nrow(data_new),
+  J = length(unique(data_new$population)),
+  K = ncol(exposure_category_matrix),
+  A = areas,
+  years = years,
+  ii = as.numeric(factor(data_new$Return_Yr)), #index of year
+  aa = as.numeric(factor(data_new$Area)),  #index of areas
+  spawners = data_new$Spawners,
+  survival = data_new$survival,
+  exposure_category_matrix = exposure_category_matrix,
+  Smax_mean = smax_prior$m.s,
+  Smax_sigma = 2*smax_prior$m.s,
+  start_row = unique(data_new$start_row),
+  end_row = unique(data_new$end_row)
+)
+
+
+
+# call model
+
+ricker_7b_model <- stan_model(file = here("lab3","ricker_7b.stan"))
+
+
+# sample from model
+
+ricker_7b_model_sampling <- rstan::sampling(ricker_7b_model,
+                                            data = data_list_7b,
+                                            chains = 4,
+                                            iter = 2000,
+                                            warmup = 1000)
+
+
+#plot theta
+
+year_effects_list <- paste0("theta_year[",1:years,"]")
+
+bayesplot::mcmc_areas(ricker_7b_model_sampling,
+                      pars = year_effects_list,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of year effects",
+       x = "Year effect",
+       y = "Density")
+
+year_effects_list_area_5 <- paste0("theta_year_area[5,",1:years,"]")
+
+bayesplot::mcmc_areas(ricker_7b_model_sampling,
+                      pars = year_effects_list_area_5,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of year effects for area 12",
+       x = "Year effect",
+       y = "Density")
+
+bayesplot::mcmc_areas(ricker_7b_model_sampling,
+                      pars = exposure_effects_list,
+                      prob = 0.8) +
+  labs(title = "Posterior Distributions of effects of exposure",
+       x = "Alpha",
+       y = "Density")
+
+
+
+
+```
+
+
+
+
+
+### Model 7b New
+
+
+```{r}
+
+
+# model 7b ----------------------------------------------------------------
+
+# include a random effect of year and area nested within year
+#need then number of years
+
+years = max(data_new$Return_Yr) - min(data_new$Return_Yr) + 1
+
+areas = length(unique(data_new$Area))
+
+
+data_list_7b_new <- list(
+  N = nrow(data_new),
+  J = length(unique(data_new$population)),
+  K = ncol(exposure_category_matrix),
+  A = areas,
+  years = years,
+  ii = as.numeric(factor(data_new$Return_Yr)), #index of year
+  aa = as.numeric(factor(data_new$Area)),  #index of areas
+  spawners = data_new$Spawners,
+  survival = data_new$survival,
+  exposure_category_matrix = exposure_category_matrix,
+  # Smax_mean = smax_prior$m.s,
+  # Smax_sigma = 2*smax_prior$m.s,
+  start_row = unique(data_new$start_row),
+  end_row = unique(data_new$end_row)
+)
+
+
+
+# call model
+
+ricker_7b_model_new <- stan_model(file = here("lab3","ricker_7b_new.stan"))
+
+
+# sample from model
+
+ricker_7b_model_sampling_new <- rstan::sampling(ricker_7b_model_new,
+                                            data = data_list_7b_new,
+                                            chains = 4,
+                                            iter = 1000,
+                                            warmup = 400)
+
+
+#let's look at the mean and the 95% credible intervals of the growth rate
+model_7b_bayesian_summary <- data.frame(summary(ricker_7b_model_sampling_new)$summary) %>% 
+  filter(startsWith(rownames(summary(ricker_7b_model_sampling_new)$summary), "r")) %>% 
+  select(mean, X2.5., X97.5.)
+
+#write it to csv
+
+write.csv(model_7b_bayesian_summary, file ="model_7b_bayesian_summary.csv")
+
+exposure_effects_list <- paste0("r[",1:8,"]")
+
+#we can also plot it
+bayesplot::mcmc_intervals(ricker_7b_model_sampling_new,
+               pars = exposure_effects_list,
+               prob = 0.80, #80% credible interval, thick line
+               prob_outer = 0.95) + #95% credible interval, thin line
+  labs(title = "Posterior Intervals of Growth Rate",
+       x = "Growth Rate",
+       y = "Density")
+
+
+#rename the r to colnames of exposure_category_matrix
+
+
+bayesplot::mcmc_areas(ricker_7b_model_sampling_new,
+                      pars = exposure_effects_list,
+                      prob = 0.95,
+                      prob_outer = 0.99) +
+  scale_y_discrete(labels = colnames(exposure_category_matrix)) +
+  labs(title = "Posterior Distributions of Growth Rate",
+       x = "Growth rate",
+       y = "Density")
+
+ggsave("model_7b_bayesian_growth_rate.png", width = 8, height = 6)
+
+```
+
+
+
+
+

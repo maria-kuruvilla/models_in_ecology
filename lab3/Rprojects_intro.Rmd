@@ -1,0 +1,110 @@
+---
+title: "Models in Ecology"
+subtitle: "Prerequisites for Lab 3"
+author: 'Maria Kuruvilla'
+date: "October 2025"
+output:
+  word_document:
+    toc: false
+  pdf_document:
+    toc: false
+  html_document:
+    collapsed: false
+    fig_caption: true
+    highlight: espresso
+    number_sections: true
+    smooth_scroll: true
+    theme: sandstone
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+<!-- Make a new document for Lab 3 - redo analysis fromKrkosek and Hilborn 2011 in a Bayesian framework  -->
+
+```{=html}
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 13px;
+  }
+td {  /* Table  */
+  font-size: 13px;
+}
+h1.title {
+  font-size: 24px;
+  color: Black;
+}
+h1 { /* Header 1 */
+  font-size: 19px;
+  color: Black;
+}
+h2 { /* Header 2 */
+    font-size: 15px;
+  color: Black;
+}
+h3 { /* Header 3 */
+    font-size: 15px;
+  color: Black;
+}
+</style>
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+
+### Introduction to effective coding in RStudio
+
+When you open RStudio for the first time, (most of) you will see three windows in following layout:
+
+<!-- add screenshot of Rstudio -->
+![](Screenshot_Rstudio.png)
+
+The large pane on the left is the Console Window. The window on the top right is the Environment / History / Connections pane and the bottom right window is the Files / Plots / Packages / Help / Viewer window. You can customise the location of each pane by clicking on the ‘Tools’ menu then selecting Global Options –> Pane Layout. You can resize the panes by clicking and dragging the middle of the window borders in the direction you want.
+
+#### Using R Projects
+
+It is recommended that your code for this lab and class is within one folder which is also an Rproject for project management. 
+
+Before making a new project, you should copy all the files for this class into a folder/directory and call it models_in_ecology. You can make a new project, by clicking on the 'New Project' option on the top right, and when prompted click on existing directory and redirect Rstudio to the folder/directory. This will create a .Rproj file within the folder. Whenever you open RStudio, you can open this file by clicking on 'Open Project in New Session' and then clicking on this file. This will help you open all the files relevant to this project and set the working directory to this folder location. This folder can have folders within it. For example, you can make a folder called lab3 and put all files related to lab3 within it. 
+
+You can read more about what the advantages of using Rprojects are here - [Why Use
+Projects?](https://thedavidchen.github.io/post/rstudio-why-use-projects/)
+
+![](Screenshot_new_project.png)
+
+You can type code into the console directly, but it becomes cumbersome when you have to write a lot of reproducible code. It is better to make a new file (R script) which contains your lines of code. Before making a new file, make sure that the path shown in your 'files' panel in your RStudio is pointing at the folder called models_in_ecology or wherever you want to make the new file. Then click on '+ file' and then choose R Script to make a new .R file, which you can name "lab3_setup.R". 
+
+![](Screenshot_new_file.png)
+
+#### Installing packages
+
+
+For lab 3, we will use some new packages, namely 'here', 'tidyverse', and 'rstan'. 
+
+First, in the console copy and paste the following line of code:
+
+```{r echo=TRUE, eval=FALSE}
+
+install.packages("here")
+
+```
+
+You can read more about the package [here](https://here.r-lib.org/), which enables easy file referencing. 
+
+Repeat to install "tidyverse":
+
+```{r echo=TRUE, eval=FALSE}
+
+install.packages("tidyverse")
+
+```
+
+
